@@ -3,6 +3,7 @@
 ## (2026-09-26)
 
 编程语言选用ts，编程范式选用函数式编程。
+
 理由汇总：
 函数没有隐藏状态，不需要先初始化复杂对象，也不容易受其他测试影响。
 对于AI编程，我们如何圈定AI每一次软工的工作范围，最好的方式是用函数的表达来圈定AI工作的范围，和函数来表达AI一次施工影响的组件范围。
@@ -35,7 +36,8 @@ $$Result = ArxivQueryRequest(KeyWords)$$
 
 这个组件，必须完全遵循arxiv的搜索协议，适配arxiv的搜索方式。
 
-暂且$$Search = ArxivQueryRequest()$$
+暂且
+$$Search = ArxivQueryRequest()$$
 
 ‍
 
