@@ -8,3 +8,4 @@
 > 11:47
 
 我先让AI创建一个函数，然后准备分组施工。
+> commit: add empty_config
