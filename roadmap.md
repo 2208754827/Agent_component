@@ -6,6 +6,7 @@
 ## 第二阶段 实现agent对论文的筛选
 
 这个时候agent阅读论文，并且对cpu上是否可复现提出参考。
+这个agent使用opencode+skill来实现
 
 ## 第三阶段 实现可供rag筛检的知识库池
 
