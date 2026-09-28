@@ -87,7 +87,8 @@ const decodeParams = (
   input: unknown,
 ): Effect.Effect<ResolvedParams, InvalidParamsError> =>
   pipe(
-    Schema.decodeUnknown(SearchParams)(input),
+    /** 参数可能来自 LLM，多余的字段（比如把 keywords 写成 keyword）一律拒绝。 */
+    Schema.decodeUnknown(SearchParams, { onExcessProperty: "error" })(input),
     Effect.mapError(
       (error) =>
         new InvalidParamsError({

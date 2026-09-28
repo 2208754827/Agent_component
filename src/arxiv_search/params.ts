@@ -17,15 +17,49 @@ export const SortOrder = Schema.Literal("ascending", "descending")
 /** arXiv 单次请求的结果数上限。 */
 export const MAX_RESULTS_LIMIT = 2000
 
+/**
+ * 投稿日期：只接受严格补零的 `YYYY-MM-DD`，且必须是真实存在的日期。
+ *
+ * 为什么不用 `Schema.DateFromString`：实测（effect 3.22）它**不校验**内容——
+ * `"2024-13-45"` / `"not-a-date"` 都会解出 Invalid Date（NaN），
+ * 而 `"2024-1-1"` 还会按本机时区解释（东八区会算成前一天）。
+ *
+ * 这里保持字符串：时区无关，拼 `submittedDate` 区间时直接去掉横杠。
+ */
+const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/u
+
+const isRealDate = (value: string): boolean => {
+  const matched = DATE_ONLY.exec(value)
+  const year = Number(matched?.[1])
+  const month = Number(matched?.[2])
+  const day = Number(matched?.[3])
+  const allIntegers =
+    Number.isInteger(year) && Number.isInteger(month) && Number.isInteger(day)
+  if (!allIntegers) return false
+  const date = new Date(Date.UTC(year, month - 1, day))
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  )
+}
+
+const SubmittedDate = Schema.String.pipe(
+  Schema.pattern(/^\d{4}-\d{2}-\d{2}$/u),
+  Schema.filter(isRealDate, {
+    message: () => "必须是真实存在的日期（YYYY-MM-DD）",
+  }),
+)
+
 /** Agent / 用户传入的检索参数。除 keywords 外都可缺省。 */
 export const SearchParams = Schema.Struct({
   keywords: Schema.NonEmptyArray(Schema.NonEmptyTrimmedString),
   /** arXiv 分类，如 `cs.RO`、`cs.LG`；多个之间是 OR。 */
   categories: Schema.optional(Schema.Array(Schema.NonEmptyTrimmedString)),
-  /** 投稿时间下界（含当天 00:00）。 */
-  submittedFrom: Schema.optional(Schema.DateFromString),
-  /** 投稿时间上界（含当天 23:59）。 */
-  submittedTo: Schema.optional(Schema.DateFromString),
+  /** 投稿时间下界（含当天 00:00），`YYYY-MM-DD`。 */
+  submittedFrom: Schema.optional(SubmittedDate),
+  /** 投稿时间上界（含当天 23:59），`YYYY-MM-DD`。 */
+  submittedTo: Schema.optional(SubmittedDate),
   sortBy: Schema.optional(SortBy),
   sortOrder: Schema.optional(SortOrder),
   maxResults: Schema.optional(
@@ -40,8 +74,8 @@ export type SearchParams = Schema.Schema.Type<typeof SearchParams>
 export interface ResolvedParams {
   readonly keywords: readonly string[]
   readonly categories: readonly string[]
-  readonly submittedFrom: Date | undefined
-  readonly submittedTo: Date | undefined
+  readonly submittedFrom: string | undefined
+  readonly submittedTo: string | undefined
   readonly sortBy: Schema.Schema.Type<typeof SortBy>
   readonly sortOrder: Schema.Schema.Type<typeof SortOrder>
   readonly maxResults: number
@@ -67,19 +101,17 @@ export const resolveParams = (params: SearchParams): ResolvedParams => ({
   start: params.start ?? defaults.start,
 })
 
-const pad = (value: number): string => String(value).padStart(2, "0")
-
-/** Date → arXiv 的 `YYYYMMDDHHMM`（固定 UTC 解释，避免本机时区漂移）。 */
-const stamp = (date: Date, time: string): string =>
-  `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}${time}`
+/** `YYYY-MM-DD` + 时分 → arXiv 的 `YYYYMMDDHHMM`（纯字符串拼接，不碰时区）。 */
+const stamp = (date: string, time: string): string =>
+  `${date.replaceAll("-", "")}${time}`
 
 const OPEN_START = "000101010000"
 const OPEN_END = "999912312359"
 
 /** 只给单边时，另一边用最大范围补齐——arXiv 的区间语法不接受开区间。 */
 const submittedRange = (
-  from: Date | undefined,
-  to: Date | undefined,
+  from: string | undefined,
+  to: string | undefined,
 ): string | undefined => {
   if (from === undefined && to === undefined) return undefined
   const lower = from === undefined ? OPEN_START : stamp(from, "0000")
