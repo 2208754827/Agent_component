@@ -20,5 +20,10 @@
   },
   "allowScripts": {
     "esbuild@0.28.2": true
+  },
+  "dependencies": {
+    "@effect/platform": "^0.97.2",
+    "effect": "^3.22.2",
+    "fast-xml-parser": "^5.11.1"
   }
 }
