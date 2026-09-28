@@ -3,6 +3,7 @@
 
 ## 2026-09-28（DLP）
 编写了arxiv组件，整个组件被导出为一个函数。相关测试补上，内容补上，架构文件补上
+> commit:fix arxiv_search
 > commit:arxiv_search 
 > 
 
