@@ -17,6 +17,17 @@ export const SortOrder = Schema.Literal("ascending", "descending")
 /** arXiv 单次请求的结果数上限。 */
 export const MAX_RESULTS_LIMIT = 2000
 
+/** 按 arXiv 官方 API 手册限制单次检索的分页窗口，最多访问前 30000 条结果。 */
+export const RESULT_WINDOW_LIMIT = 30000
+
+/** 缺省值集中放这里，改行为不用翻函数体。 */
+export const defaults = {
+  sortBy: "relevance",
+  sortOrder: "descending",
+  maxResults: 20,
+  start: 0,
+} as const
+
 /**
  * 投稿日期：只接受严格补零的 `YYYY-MM-DD`，且必须是真实存在的日期。
  *
@@ -67,7 +78,18 @@ export const SearchParams = Schema.Struct({
   ),
   /** 翻页起点，从 0 开始。 */
   start: Schema.optional(Schema.Int.pipe(Schema.nonNegative())),
-})
+}).pipe(
+  // 官方 API 手册的 30000 条分页窗口包含当前页，缺省参数也须参与校验。
+  Schema.filter(
+    (params) =>
+      (params.start ?? defaults.start) +
+        (params.maxResults ?? defaults.maxResults) <=
+      RESULT_WINDOW_LIMIT,
+    {
+      message: () => `start + maxResults 不能超过 ${RESULT_WINDOW_LIMIT}`,
+    },
+  ),
+)
 export type SearchParams = Schema.Schema.Type<typeof SearchParams>
 
 /** 补全缺省值之后的参数，管道下游只看这个类型。 */
@@ -81,14 +103,6 @@ export interface ResolvedParams {
   readonly maxResults: number
   readonly start: number
 }
-
-/** 缺省值集中放这里，改行为不用翻函数体。 */
-export const defaults = {
-  sortBy: "relevance",
-  sortOrder: "descending",
-  maxResults: 20,
-  start: 0,
-} as const
 
 export const resolveParams = (params: SearchParams): ResolvedParams => ({
   keywords: params.keywords,

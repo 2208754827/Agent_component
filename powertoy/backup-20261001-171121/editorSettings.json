@@ -1,0 +1,30 @@
+{
+  "ShortcutSettingsDictionary": {
+    "f0ab9984-6590-4f56-97d8-f57fbac962a5": {
+      "Id": "f0ab9984-6590-4f56-97d8-f57fbac962a5",
+      "Shortcut": {
+        "OriginalKeys": "162;164;84",
+        "TargetKeys": "162;164;84",
+        "TargetApp": "",
+        "OperationType": 1,
+        "TargetText": "",
+        "ProgramPath": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "ProgramArgs": "",
+        "StartInDirectory": "G:\\Document\\projects",
+        "Elevation": 0,
+        "IfRunningAction": 0,
+        "Visibility": 0,
+        "UriToOpen": ""
+      },
+      "Profiles": [],
+      "IsActive": true
+    }
+  },
+  "ProfileDictionary": {},
+  "ShortcutsByOperationType": {
+    "RunProgram": [
+      "f0ab9984-6590-4f56-97d8-f57fbac962a5"
+    ]
+  },
+  "ActiveProfile": ""
+}

@@ -10,7 +10,7 @@
  */
 export { arxivSearch } from "./client.js"
 
-export type { Config } from "./client.js"
+export type { Config, Search } from "./client.js"
 export type { Author, FeedPage, Paper } from "./paper.js"
 export type { SearchParams } from "./params.js"
 export type {

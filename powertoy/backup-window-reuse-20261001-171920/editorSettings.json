@@ -1,0 +1,30 @@
+{
+  "ShortcutSettingsDictionary": {
+    "efc87904-e0f0-4b42-9da4-04670ce8068d": {
+      "Id": "efc87904-e0f0-4b42-9da4-04670ce8068d",
+      "Shortcut": {
+        "OriginalKeys": "162;164;84",
+        "TargetKeys": "162;164;84",
+        "TargetApp": "",
+        "OperationType": 1,
+        "TargetText": "",
+        "ProgramPath": "C:\\Users\\Dankinder\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe",
+        "ProgramArgs": "",
+        "StartInDirectory": "G:\\Document\\projects",
+        "Elevation": 0,
+        "IfRunningAction": 0,
+        "Visibility": 0,
+        "UriToOpen": ""
+      },
+      "Profiles": [],
+      "IsActive": true
+    }
+  },
+  "ProfileDictionary": {},
+  "ShortcutsByOperationType": {
+    "RunProgram": [
+      "efc87904-e0f0-4b42-9da4-04670ce8068d"
+    ]
+  },
+  "ActiveProfile": ""
+}

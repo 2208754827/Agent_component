@@ -19,7 +19,11 @@ const request = {
 }
 
 const program = pipe(
-  arxivSearch(request),
+  Effect.gen(function* () {
+    // 整个应用只创建一次会话，后续 Agent 任务共享这个 search。
+    const search = yield* arxivSearch()
+    return yield* search(request)
+  }),
   Effect.provide(FetchHttpClient.layer),
 )
 

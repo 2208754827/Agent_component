@@ -34,7 +34,10 @@ const fakeHttpClient = (body: string, status = 200) =>
 
 const run = (input: unknown, body: string, status = 200) =>
   Effect.runPromise(
-    Effect.provide(arxivSearch(input, testConfig), fakeHttpClient(body, status)),
+    Effect.provide(
+      Effect.flatMap(arxivSearch(testConfig), (search) => search(input)),
+      fakeHttpClient(body, status),
+    ),
   )
 
 /** 取失败通道的错误对象。 */
@@ -42,7 +45,7 @@ const runFailure = (input: unknown, body: string, status = 200) =>
   Effect.runPromise(
     Effect.flip(
       Effect.provide(
-        arxivSearch(input, testConfig),
+        Effect.flatMap(arxivSearch(testConfig), (search) => search(input)),
         fakeHttpClient(body, status),
       ),
     ),

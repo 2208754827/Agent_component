@@ -153,6 +153,41 @@ describe("SearchParams 校验", () => {
     expect(decodeFails({ keywords: ["a"], start: -1 })).toBe(true)
   })
 
+  it.each([
+    { start: 29999, maxResults: 1 },
+    { start: 28000, maxResults: 2000 },
+  ])("分页窗口允许恰好到达 30000：%j", (pagination) => {
+    expect(decodeFails({ keywords: ["a"], ...pagination })).toBe(false)
+  })
+
+  it.each([
+    { start: 29999, maxResults: 2 },
+    { start: 28001, maxResults: 2000 },
+    { start: 30000, maxResults: 1 },
+  ])("分页窗口不能超过 30000：%j", (pagination) => {
+    expect(decodeFails({ keywords: ["a"], ...pagination })).toBe(true)
+  })
+
+  it("缺省页大小 20 参与分页窗口校验", () => {
+    const params = resolveParams(decode({ keywords: ["a"], start: 29980 }))
+    expect(params.start).toBe(29980)
+    expect(params.maxResults).toBe(20)
+    expect(decodeFails({ keywords: ["a"], start: 29981 })).toBe(true)
+  })
+
+  it("缺省起点 0 允许最大页大小 2000", () => {
+    const params = resolveParams(decode({ keywords: ["a"], maxResults: 2000 }))
+    expect(params.start).toBe(0)
+    expect(params.maxResults).toBe(2000)
+  })
+
+  it.each([Number.MAX_SAFE_INTEGER, Number.MAX_VALUE, Infinity])(
+    "异常大的 start 被拒绝：%s",
+    (start) => {
+      expect(decodeFails({ keywords: ["a"], start, maxResults: 1 })).toBe(true)
+    },
+  )
+
   it("日期必须是真实存在的日期", () => {
     expect(decodeFails({ keywords: ["a"], submittedFrom: "2024-13-45" })).toBe(
       true,

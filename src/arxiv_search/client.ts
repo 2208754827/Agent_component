@@ -1,16 +1,13 @@
-/**
- * 检索请求：组件里唯一描述网络副作用的地方。
- *
- * 返回值是 Effect「描述」，不是正在跑的 Promise —— 执行只发生在入口。
- * 超时、限流退避都在这里收敛成组件的错误类型。
- */
-import { Duration, Effect, ParseResult, pipe, Schedule, Schema } from "effect"
+/** 创建可共享的检索会话。所有网络和状态操作都是惰性的 Effect。 */
+import { Clock, Duration, Effect, Option, ParseResult, pipe, Schedule, Schema } from "effect"
 import {
+  FetchHttpClient,
   HttpClient,
   HttpClientRequest,
   HttpClientResponse,
 } from "@effect/platform"
 import type { HttpClientError } from "@effect/platform"
+import { MAX_RETRY_DELAY_MS, resolveConfig, type Config } from "./config.js"
 import {
   HttpStatusError,
   InvalidParamsError,
@@ -18,121 +15,110 @@ import {
   type ArxivSearchError,
 } from "./errors.js"
 import { parseFeed } from "./feed.js"
-import {
-  resolveParams,
-  SearchParams,
-  toApiParams,
-  type ResolvedParams,
-} from "./params.js"
+import { resolveParams, SearchParams, toApiParams } from "./params.js"
 import type { FeedPage } from "./paper.js"
+import { makeSession, retryAfterMillis } from "./session.js"
 
-export interface Config {
-  readonly baseUrl: string
-  readonly timeout: Duration.DurationInput
-  /** arXiv 要求带上能识别来源的 UA。 */
-  readonly userAgent: string
-  readonly retry: {
-    readonly times: number
-    readonly base: Duration.DurationInput
-    readonly factor: number
-  }
-}
+export { defaultConfig } from "./config.js"
+export type { Config } from "./config.js"
 
-export const defaultConfig: Config = {
-  /** https + export 子域，避免 301 往返（301 也会计入限流）。 */
-  baseUrl: "https://export.arxiv.org/api/query",
-  timeout: Duration.seconds(30),
-  userAgent: "agent-component/0.0.0 (+arxiv_search)",
-  retry: {
-    times: 3,
-    /** arXiv 官方建议请求间隔 >= 3s，退避起点就取这个值。 */
-    base: Duration.seconds(3),
-    factor: 2,
-  },
-}
+/** 从同一个会话取得的函数共享连接、冷却时间与缓存。 */
+export type Search = (input: unknown) => Effect.Effect<FeedPage, ArxivSearchError>
 
-/** 重试策略：只对「可能自己好」的错误重试，参数错误重试没有意义。 */
 const isRetryable = (error: ArxivSearchError): boolean =>
   error._tag === "TransportError" ||
   (error._tag === "HttpStatusError" &&
-    (error.status === 429 || error.status >= 500))
+    (error.status === 429 || (error.status >= 500 && error.status <= 599)))
 
-const retrySchedule = (
-  retry: Config["retry"],
-): Schedule.Schedule<Duration.Duration, ArxivSearchError, never> =>
-  Schedule.jittered(Schedule.exponential(retry.base, retry.factor))
-
-const retryOptions = (
-  retry: Config["retry"],
-): Effect.Retry.Options<ArxivSearchError> => ({
-  schedule: retrySchedule(retry),
-  times: retry.times,
-  while: isRetryable,
-})
-
-/** 平台错误 / 超时 → 组件错误。 */
+/** 读取 body 的失败也属于传输失败，不能误报为 HttpStatusError(200)。 */
 const toHttpError = (
   error: HttpClientError.HttpClientError | TransportError,
-): TransportError | HttpStatusError =>
-  error._tag === "ResponseError"
-    ? new HttpStatusError({
-        url: error.request.url,
-        status: error.response.status,
-      })
-    : error._tag === "RequestError"
-      ? new TransportError({ url: error.request.url, detail: error.reason })
-      : error
+): TransportError | HttpStatusError => {
+  if (error._tag === "TransportError") return error
+  if (error._tag === "ResponseError" && error.reason === "StatusCode") {
+    return new HttpStatusError({ url: error.request.url, status: error.response.status })
+  }
+  return new TransportError({ url: error.request.url, detail: error.message })
+}
 
-const decodeParams = (
-  input: unknown,
-): Effect.Effect<ResolvedParams, InvalidParamsError> =>
+const decodeParams = (input: unknown) =>
   pipe(
-    /** 参数可能来自 LLM，多余的字段（比如把 keywords 写成 keyword）一律拒绝。 */
     Schema.decodeUnknown(SearchParams, { onExcessProperty: "error" })(input),
-    Effect.mapError(
-      (error) =>
-        new InvalidParamsError({
-          detail: ParseResult.TreeFormatter.formatErrorSync(error),
-        }),
-    ),
+    Effect.mapError((error) => new InvalidParamsError({
+      detail: ParseResult.TreeFormatter.formatErrorSync(error),
+    })),
     Effect.map(resolveParams),
   )
 
-const buildRequest = (config: Config, params: ResolvedParams) =>
-  HttpClientRequest.get(config.baseUrl, {
-    urlParams: toApiParams(params),
-    headers: { "user-agent": config.userAgent },
-  })
-
-const fetchFeed = (config: Config, params: ResolvedParams) => {
-  const request = buildRequest(config, params)
-  const timeoutError = () =>
-    new TransportError({ url: request.url, detail: "请求超时" })
-
-  return pipe(
-    HttpClient.execute(request),
-    Effect.flatMap(HttpClientResponse.filterStatusOk),
-    Effect.flatMap((response) => response.text),
-    Effect.timeoutFail({ duration: config.timeout, onTimeout: timeoutError }),
-    Effect.mapError(toHttpError),
-    /** 解析错误在这里才进错误通道，和上面的 HTTP 错误分开处理。 */
-    Effect.flatMap(parseFeed),
-  )
-}
-
 /**
- * 检索 arXiv。
- *
- * - `input` 收 unknown：参数来自自然语言 / LLM，必须在边界上校验；
- * - 返回 Effect，需要 `HttpClient`，入口用 `FetchHttpClient.layer` 提供；
- * - 不做跨请求限速：连续调用请在调用方串行并留足间隔（后续「爬虫池」负责）。
+ * 入口执行一次工厂，随后把 search 交给所有检索任务复用。
+ * 不要逐请求创建会话；多进程/多机器需要通过同一检索服务统一调度。
  */
 export const arxivSearch = (
-  input: unknown,
-  config: Config = defaultConfig,
-): Effect.Effect<FeedPage, ArxivSearchError, HttpClient.HttpClient> =>
-  pipe(
-    decodeParams(input),
-    Effect.flatMap((params) => fetchFeed(config, params)),
-    Effect.retry(retryOptions(config.retry)),
-  )
+  config: Config = {},
+): Effect.Effect<Search, InvalidParamsError, HttpClient.HttpClient> =>
+  Effect.gen(function* () {
+    const options = yield* resolveConfig(config)
+    const client = HttpClient.withScope(yield* HttpClient.HttpClient)
+    const fetchOptions = Option.getOrElse(
+      yield* Effect.serviceOption(FetchHttpClient.RequestInit),
+      (): RequestInit => ({}),
+    )
+    const session = yield* makeSession(options.cache)
+    const schedule = Schedule.forever.pipe(
+      // 先截断数值再交给 Schedule，指数溢出也不会变成无限等待。
+      Schedule.addDelay((attempt) => Math.min(
+        options.retry.base * options.retry.factor ** attempt,
+        MAX_RETRY_DELAY_MS,
+      )),
+      Schedule.jitteredWith({ min: 1, max: 1.2 }),
+      Schedule.modifyDelay((_, delay) => Duration.min(delay, Duration.millis(MAX_RETRY_DELAY_MS))),
+    )
+
+    const fetchPage = (apiParams: Readonly<Record<string, string>>) => {
+      const request = HttpClientRequest.get(options.baseUrl, {
+        urlParams: apiParams,
+        headers: { "user-agent": options.userAgent },
+      })
+      const http = Effect.gen(function* () {
+        const response = yield* client.execute(request)
+        if (response.status === 429 || response.status === 503) {
+          const delay = retryAfterMillis(
+            response.headers["retry-after"],
+            yield* Clock.currentTimeMillis,
+          )
+          if (delay !== undefined) yield* session.postpone(delay)
+        }
+        yield* HttpClientResponse.filterStatusOk(response)
+        return yield* response.text
+      }).pipe(
+        // Fetch 默认自动跟随重定向会绕过请求间隔；将 3xx 交给普通状态码错误处理。
+        Effect.provideService(FetchHttpClient.RequestInit, { ...fetchOptions, redirect: "manual" }),
+        Effect.timeoutFail({
+          duration: options.timeout,
+          onTimeout: () => new TransportError({ url: request.url, detail: "请求超时" }),
+        }),
+        Effect.mapError(toHttpError),
+      )
+      return session.attempt(Effect.scoped(http)).pipe(
+        Effect.flatMap(parseFeed),
+        Effect.retry({ schedule, times: options.retry.times, while: isRetryable }),
+      )
+    }
+
+    return (input: unknown) => Effect.gen(function* () {
+      const params = yield* decodeParams(input)
+      const apiParams = toApiParams(params)
+      const key = JSON.stringify(apiParams)
+      const cached = yield* session.getCached(key)
+      if (cached !== undefined) return structuredClone(cached)
+      return yield* session.serial(Effect.gen(function* () {
+        // 等待期间前一个调用可能已取得相同页，重查即可合并并发重复请求。
+        const shared = yield* session.getCached(key)
+        if (shared !== undefined) return structuredClone(shared)
+        const page = yield* fetchPage(apiParams)
+        yield* session.putCached(key, page)
+        return structuredClone(page)
+      }))
+    })
+  })
