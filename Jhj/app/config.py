@@ -6,12 +6,12 @@ class Settings(BaseSettings):
     """全局配置，从环境变量读取"""
 
     # LLM
-    LLM_BASE_URL: str = "https://hapi.hc11.org/v1"
+    LLM_BASE_URL: str = "https://api.inferera.com/v1"
     LLM_API_KEY: str = ""
-    LLM_MODEL: str = "deepseek-v4.1-flash"
+    LLM_MODEL: str = "agents-a1-free"
 
     # Embedding
-    EMBEDDING_BASE_URL: str = "https://hapi.hc11.org/v1"
+    EMBEDDING_BASE_URL: str = "https://api.inferera.com/v1"
     EMBEDDING_API_KEY: str = ""
     EMBEDDING_MODEL: str = "text-embedding-3-small"
     EMBEDDING_DIM: int = 1536
