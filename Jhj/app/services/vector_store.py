@@ -151,3 +151,44 @@ def delete_by_doc_id(doc_id: str):
     collection = get_collection()
     collection.delete(expr=f'doc_id == "{doc_id}"')
     collection.flush()
+
+
+def search_multi_queries(
+    query_vectors: list[list[float]],
+    top_k: int = None,
+    per_query_k: int = None,
+) -> list[dict]:
+    """
+    多关键词检索：多个查询向量分别检索，合并去重后按分数排序
+
+    用于 Query 改写后的多路召回，解决用户用词和文档对不上的问题
+
+    Args:
+        query_vectors: 多个查询向量列表
+        top_k: 最终返回结果数，默认从配置读取
+        per_query_k: 每个查询向量检索多少条，默认 top_k * 2
+
+    Returns:
+        合并去重后的检索结果列表，按相似度分数降序排列
+    """
+    if top_k is None:
+        top_k = settings.RETRIEVAL_TOP_K
+    if per_query_k is None:
+        per_query_k = top_k * 2  # 每个查询多捞一些，合并后取 top_k
+
+    # 每个查询向量分别检索
+    all_results = []
+    for query_vector in query_vectors:
+        results = search_vectors(query_vector, top_k=per_query_k)
+        all_results.extend(results)
+
+    # 按 doc_id + chunk_index 去重，保留最高分
+    seen = {}
+    for r in all_results:
+        key = f"{r['doc_id']}_{r['chunk_index']}"
+        if key not in seen or r["score"] > seen[key]["score"]:
+            seen[key] = r
+
+    # 按分数降序排序，取 top_k
+    merged = sorted(seen.values(), key=lambda x: x["score"], reverse=True)
+    return merged[:top_k]

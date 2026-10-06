@@ -77,3 +77,56 @@ async def answer_with_context(question: str, contexts: list[str]) -> str:
     ]
 
     return await chat_completion(messages, temperature=0.3)
+
+
+async def rewrite_query(question: str, num_queries: int = 4) -> list[str]:
+    """
+    Query 改写：把用户问题扩展成多个检索关键词
+
+    解决用户用词和文档对不上的问题，比如用户说"双分支"，文档里写"dual-branch"
+
+    Args:
+        question: 用户原始问题
+        num_queries: 生成几个检索关键词，默认 4 个
+
+    Returns:
+        检索关键词列表，包含原始问题
+    """
+    system_prompt = """你是一个专业的检索查询改写助手。用户会给你一个问题，你需要把它改写成多个适合用于向量检索的关键词或短语。
+
+规则：
+1. 生成的关键词要覆盖用户问题的核心概念
+2. 包含同义词、近义词、相关术语
+3. 如果是中文问题，同时给出英文翻译（学术文档常用英文）
+4. 每个关键词简洁明了，不要太长
+5. 直接输出关键词，每行一个，不要编号，不要解释"""
+
+    user_prompt = f"""请把下面这个问题改写成 {num_queries} 个检索关键词：
+
+{question}"""
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    result = await chat_completion(messages, temperature=0.3, max_tokens=512)
+
+    # 解析结果，按行分割，去掉空行
+    queries = [line.strip() for line in result.split("\n") if line.strip()]
+
+    # 确保原始问题在列表里
+    if question not in queries:
+        queries.insert(0, question)
+
+    # 去重，限制数量
+    seen = set()
+    unique_queries = []
+    for q in queries:
+        if q not in seen:
+            seen.add(q)
+            unique_queries.append(q)
+        if len(unique_queries) >= num_queries + 1:  # +1 因为包含原始问题
+            break
+
+    return unique_queries
