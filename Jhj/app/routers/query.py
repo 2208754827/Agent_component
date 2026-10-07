@@ -1,5 +1,6 @@
 """检索与问答接口"""
 
+import re
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -7,6 +8,42 @@ from app.services import embedding, vector_store, llm
 from app.config import settings
 
 router = APIRouter(prefix="/api/query", tags=["检索问答"])
+
+# 中文停用词表（轻量级，用于查询扩展时过滤无意义词）
+_STOP_WORDS = {"的", "了", "是", "在", "我", "有", "和", "就", "不", "人", "都", "一", "一个", "上", "也", "很", "到", "说", "要", "去", "你", "会", "着", "没有", "看", "好", "自己", "这", "那", "这个", "那个", "怎么", "什么", "为什么", "如何", "哪些", "吗", "呢", "吧", "啊", "呀", "哦", "嗯"}
+
+
+def _lightweight_query_expansion(question: str) -> list[str]:
+    """
+    轻量级查询扩展（不依赖 LLM，LLM 失败时的 fallback）
+
+    策略：
+    1. 原始查询
+    2. 去掉停用词后的关键词组合
+    3. 提取英文关键词单独作为查询
+
+    Args:
+        question: 用户原始问题
+
+    Returns:
+        查询列表
+    """
+    queries = [question]
+
+    # 去掉停用词，提取关键词
+    words = re.findall(r"[\u4e00-\u9fa5]+|[a-zA-Z0-9]+", question)
+    keywords = [w for w in words if w not in _STOP_WORDS and len(w) > 1]
+    if keywords:
+        keyword_query = " ".join(keywords)
+        if keyword_query != question:
+            queries.append(keyword_query)
+
+    # 提取英文关键词单独查询
+    english_words = [w for w in words if re.match(r"^[a-zA-Z0-9]+$", w) and len(w) > 1]
+    if english_words:
+        queries.append(" ".join(english_words))
+
+    return list(dict.fromkeys(queries))  # 去重保序
 
 
 class QueryRequest(BaseModel):
@@ -40,15 +77,20 @@ async def search_only(request: QueryRequest):
     返回最相关的文本块列表
     """
     try:
-        # 1. Query 改写：扩展同义词和英文翻译，解决用词对不上的问题
-        queries = await llm.rewrite_query(request.question)
+        # 1. Query 改写：优先用 LLM 扩展同义词和英文翻译，失败时用轻量级规则扩展
+        try:
+            queries = await llm.rewrite_query(request.question)
+        except Exception:
+            queries = _lightweight_query_expansion(request.question)
 
         # 2. 批量向量化
         query_vectors = await embedding.get_embeddings(queries)
 
-        # 3. 多关键词检索，合并去重
+        # 3. 多关键词检索，合并去重，带标题匹配加权
         top_k = request.top_k or settings.RETRIEVAL_TOP_K
-        results = vector_store.search_multi_queries(query_vectors, top_k=top_k)
+        results = vector_store.search_multi_queries(
+            query_vectors, top_k=top_k, original_query=request.question
+        )
 
         # 4. 格式化返回
         return [
@@ -78,15 +120,20 @@ async def ask_with_rag(request: QueryRequest):
     5. LLM 基于上下文回答
     """
     try:
-        # 1. Query 改写：扩展同义词和英文翻译，解决用词对不上的问题
-        queries = await llm.rewrite_query(request.question)
+        # 1. Query 改写：优先用 LLM 扩展同义词和英文翻译，失败时用轻量级规则扩展
+        try:
+            queries = await llm.rewrite_query(request.question)
+        except Exception:
+            queries = _lightweight_query_expansion(request.question)
 
         # 2. 批量向量化
         query_vectors = await embedding.get_embeddings(queries)
 
-        # 3. 多关键词检索，合并去重
+        # 3. 多关键词检索，合并去重，带标题匹配加权
         top_k = request.top_k or settings.RETRIEVAL_TOP_K
-        results = vector_store.search_multi_queries(query_vectors, top_k=top_k)
+        results = vector_store.search_multi_queries(
+            query_vectors, top_k=top_k, original_query=request.question
+        )
 
         if not results:
             return QueryResponse(

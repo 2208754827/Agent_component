@@ -100,11 +100,19 @@ def extract_structured_text_from_pdf(file_content: bytes) -> str:
                     continue
 
                 level = get_heading_level(line_size)
-                if level == 1:
+                # 标题过滤：标题行通常较短，且不以句号/逗号/冒号结尾
+                # 避免把正文误判为标题（某些 PDF 字体大小信息不可靠）
+                is_heading = False
+                if level > 0 and len(line_text) < 60:
+                    # 不以标点结尾的短行更可能是标题
+                    if not line_text.endswith(("。", "，", "：", "；", ".", ",", ":", ";")):
+                        is_heading = True
+
+                if is_heading and level == 1:
                     page_lines.append(f"\n# {line_text}\n")
-                elif level == 2:
+                elif is_heading and level == 2:
                     page_lines.append(f"\n## {line_text}\n")
-                elif level == 3:
+                elif is_heading and level == 3:
                     page_lines.append(f"\n### {line_text}\n")
                 else:
                     page_lines.append(line_text)
@@ -113,7 +121,19 @@ def extract_structured_text_from_pdf(file_content: bytes) -> str:
             pages_text.append(f"--- 第 {page_num + 1} 页 ---\n" + "\n".join(page_lines))
 
     doc.close()
-    return "\n\n".join(pages_text)
+    result = "\n\n".join(pages_text)
+
+    # 后处理：修复中英文之间的多余空格（如 "R A G" -> "RAG"，"Mi l v u s" -> "Milvus"）
+    # 匹配单个英文字母之间的空格，连续 2 个以上单字母+空格的模式
+    import re
+    def fix_letter_spaces(match):
+        return match.group(0).replace(" ", "")
+    # 匹配：字母 空格 字母 空格 字母 ...（至少 3 个字母）
+    result = re.sub(r'([A-Za-z]\s){2,}[A-Za-z]', fix_letter_spaces, result)
+    # 匹配：字母 空格 字母（2 个字母的情况，如 "P D F"）
+    result = re.sub(r'\b([A-Za-z])\s([A-Za-z])\b', r'\1\2', result)
+
+    return result
 
 
 def extract_text_from_file(file_content: bytes, filename: str) -> str:

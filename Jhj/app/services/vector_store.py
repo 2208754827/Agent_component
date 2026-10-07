@@ -153,23 +153,61 @@ def delete_by_doc_id(doc_id: str):
     collection.flush()
 
 
+def _extract_heading(text: str) -> str:
+    """从块文本中提取标题（【...】标记的部分）"""
+    import re
+    match = re.match(r"^【(.+?)】", text.strip())
+    return match.group(1) if match else ""
+
+
+def _title_boost(query_text: str, result: dict, boost: float = 0.15) -> float:
+    """
+    标题匹配加权：如果查询词出现在块的标题里，给额外加分
+
+    Args:
+        query_text: 原始查询文本
+        result: 检索结果（含 text 字段）
+        boost: 加权幅度，默认 0.15
+
+    Returns:
+        加权后的分数
+    """
+    heading = _extract_heading(result.get("text", ""))
+    if not heading:
+        return result["score"]
+
+    # 简单的关键词匹配：查询中的字符出现在标题中就算匹配
+    query_chars = set(query_text.replace(" ", ""))
+    heading_chars = set(heading.replace(" ", ""))
+    overlap = len(query_chars & heading_chars)
+    query_len = max(len(query_chars), 1)
+    ratio = overlap / query_len
+
+    if ratio > 0.3:  # 超过 30% 的字符匹配才加权
+        return result["score"] + boost * ratio
+    return result["score"]
+
+
 def search_multi_queries(
     query_vectors: list[list[float]],
     top_k: int = None,
     per_query_k: int = None,
+    original_query: str = "",
 ) -> list[dict]:
     """
     多关键词检索：多个查询向量分别检索，合并去重后按分数排序
 
     用于 Query 改写后的多路召回，解决用户用词和文档对不上的问题
+    增加标题匹配加权：查询词出现在标题里的块额外加分
 
     Args:
         query_vectors: 多个查询向量列表
         top_k: 最终返回结果数，默认从配置读取
         per_query_k: 每个查询向量检索多少条，默认 top_k * 2
+        original_query: 原始查询文本，用于标题匹配加权
 
     Returns:
-        合并去重后的检索结果列表，按相似度分数降序排列
+        合并去重后的检索结果列表，按加权后的分数降序排列
     """
     if top_k is None:
         top_k = settings.RETRIEVAL_TOP_K
@@ -188,6 +226,11 @@ def search_multi_queries(
         key = f"{r['doc_id']}_{r['chunk_index']}"
         if key not in seen or r["score"] > seen[key]["score"]:
             seen[key] = r
+
+    # 标题匹配加权
+    if original_query:
+        for r in seen.values():
+            r["score"] = _title_boost(original_query, r)
 
     # 按分数降序排序，取 top_k
     merged = sorted(seen.values(), key=lambda x: x["score"], reverse=True)

@@ -11,10 +11,11 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "agents-a1-free"
 
     # Embedding
+    EMBEDDING_PROVIDER: str = "local"  # local 或 openai
     EMBEDDING_BASE_URL: str = "https://api.inferera.com/v1"
     EMBEDDING_API_KEY: str = ""
-    EMBEDDING_MODEL: str = "text-embedding-3-small"
-    EMBEDDING_DIM: int = 1536
+    EMBEDDING_MODEL: str = "BAAI/bge-small-zh-v1.5"
+    EMBEDDING_DIM: int = 512
 
     # Milvus
     MILVUS_HOST: str = "localhost"
@@ -37,6 +38,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
 
 settings = Settings()
